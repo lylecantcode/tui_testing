@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"strings"
 	// "github.com/charmbracelet/lipgloss" // package for the future, for style changes.
 	_ "github.com/mattn/go-sqlite3"
 	"os"
@@ -27,8 +28,8 @@ func initialModel() model {
 	insertModel := textinput.New()
 	insertModel.Placeholder = "Add New Item"
 	insertModel.Prompt = ""    // we do not want an additional prompt for the "add new item"
-	insertModel.CharLimit = 20 // no real reason for this limitation, can experiment
-	insertModel.Width = 10     // no real reason for this limitation, can experiment
+	insertModel.CharLimit = 20 // character limit will limit potentially problematic entries
+	insertModel.Width = 20     // this limits the field of view when typing to X characters long
 
 	if len(values) == 0 {
 		items.choices = []string{"Protein Shake", "Creatine", "Vitamin D", "Cheese", "Pizza", "Chocolate", "Bananas"}
@@ -64,13 +65,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		// The "up" key moves the cursor up
-		case "up":
+		case "up", "shift+tab":
 			if m.cursor > 0 {
 				m.cursor--
 			}
 
 		// The "down" key moves the cursor down
-		case "down":
+		case "down", "tab":
 			if m.cursor < len(m.choices) { //-1 {
 				m.cursor++
 			}
@@ -99,9 +100,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.addingNew.Focus()
 				}
 			}
-		case "delete":
-			m.deleteItems(m.choices[m.cursor])
-			m.choices = deleteChoice(m.choices, m.cursor)
+		case "delete", "backspace":
+			if m.cursor < len(m.choices) {
+				delete(m.selected, m.cursor) // otherwise [x] will be retained visually.
+				m.deleteItems(m.choices[m.cursor])
+				m.choices = deleteChoice(m.choices, m.cursor)
+			}
 		}
 	}
 	cmd = m.updateInputs(msg) // used to drive the addNewItem functionality.
@@ -119,13 +123,21 @@ func deleteChoice(s []string, index int) []string {
 // delete selection of addNew, reselect newly inserted item
 // add new item to DB
 func (m *model) addNewItem() {
+	if m.dupeCheck() {
+		m.addingNew.Reset()
+		delete(m.selected, m.cursor)
+		m.addingNew.Blur()
+		return
+	}
 	newItem := m.addingNew.Value()
+	newItem = strings.Title(newItem)
 	m.choices = append(m.choices, newItem)
 	m.addingNew.Blur()
 	m.addingNew.Reset()
 	delete(m.selected, m.cursor)
 	m.selected[len(m.choices)-1] = struct{}{}
 	m.addItems(newItem, true)
+
 }
 
 // handles typing once focused.
@@ -133,6 +145,20 @@ func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	m.addingNew, cmd = m.addingNew.Update(msg)
 	return cmd
+}
+
+func (m *model) dupeCheck() bool {
+	newItem := m.addingNew.Value()
+	if newItem == " " || newItem == "" {
+		return true
+	}
+	for i, v := range m.choices {
+		if strings.ToLower(v) == strings.ToLower(newItem) {
+			m.selected[i] = struct{}{}
+			return true
+		}
+	}
+	return false
 }
 
 func (m model) View() string {
